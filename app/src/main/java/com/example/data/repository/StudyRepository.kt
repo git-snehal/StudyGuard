@@ -13,15 +13,25 @@ import com.example.util.AchievementsManager
 import com.example.util.InstalledAppsHelper
 import com.example.util.StudyAudioPlayer
 import com.example.util.StudyPreferences
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class StudyRepository(
     private val studyDao: StudyDao,
     private val context: Context
 ) {
+    companion object {
+        val distractionCache: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+        fun isPackageDistraction(packageName: String): Boolean {
+            return distractionCache.contains(packageName)
+        }
+    }
+
     val allSessions: Flow<List<StudySession>> = studyDao.getAllSessions()
     val allApps: Flow<List<BlockedAppEntity>> = studyDao.getAllAppConfigs()
     val distractionApps: Flow<List<BlockedAppEntity>> = studyDao.getDistractionApps()
@@ -31,6 +41,15 @@ class StudyRepository(
     val allMusicTracks: Flow<List<StudyMusicTrack>> = studyDao.getAllMusicTracks()
     val allAchievements: Flow<List<AchievementEntity>> = studyDao.getAllAchievements()
     val allPlaylists: Flow<List<PlaylistEntity>> = studyDao.getAllPlaylists()
+
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            distractionApps.collect { list ->
+                distractionCache.clear()
+                distractionCache.addAll(list.map { it.packageName })
+            }
+        }
+    }
 
     suspend fun syncInstalledAppsIfNeeded() = withContext(Dispatchers.IO) {
         val existing = studyDao.getAllAppConfigs().first()
@@ -99,10 +118,20 @@ class StudyRepository(
     }
 
     suspend fun setAppDistraction(packageName: String, isDistraction: Boolean) = withContext(Dispatchers.IO) {
+        if (isDistraction) {
+            distractionCache.add(packageName)
+        } else {
+            distractionCache.remove(packageName)
+        }
         studyDao.setAppDistractionState(packageName, isDistraction)
     }
 
     suspend fun addCustomApp(packageName: String, appName: String, category: String, isDistraction: Boolean) = withContext(Dispatchers.IO) {
+        if (isDistraction) {
+            distractionCache.add(packageName)
+        } else {
+            distractionCache.remove(packageName)
+        }
         studyDao.insertOrUpdateApp(
             BlockedAppEntity(
                 packageName = packageName,
@@ -132,6 +161,8 @@ class StudyRepository(
     }
 
     suspend fun setAllDistractions(distractPackageNames: Set<String>) = withContext(Dispatchers.IO) {
+        distractionCache.clear()
+        distractionCache.addAll(distractPackageNames)
         val all = studyDao.getAllAppConfigs().first()
         for (app in all) {
             val shouldBlock = distractPackageNames.contains(app.packageName)

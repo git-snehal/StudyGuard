@@ -24,11 +24,23 @@ class FocusAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var lastInterceptTime = 0L
+    private val packageInterceptTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private var lastShortsInterceptTime = 0L
     private var lastLimitInterceptTime = 0L
     private var currentForegroundPackage: String? = null
     private var foregroundStartTime: Long = 0L
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        serviceScope.launch {
+            try {
+                val list = StudyGuardApp.instance.repository.getDistractionPackageNames()
+                com.example.data.repository.StudyRepository.distractionCache.addAll(list)
+            } catch (e: Exception) {
+                // Ignore initialization race
+            }
+        }
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
@@ -38,7 +50,9 @@ class FocusAccessibilityService : AccessibilityService() {
         val isNuclearLockActive = emergencyLock.isNuclearLockActive()
         val isNuclearBlockActive = emergencyLock.isNuclearBlockAppsActive()
         val isStudyActive = StudyPreferences.isStudyActive(context) || isNuclearBlockActive
-        val packageName = event.packageName?.toString() ?: return
+        val packageName = event.packageName?.toString()
+            ?: rootInActiveWindow?.packageName?.toString()
+            ?: return
 
         // Track foreground time for app limits
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -308,23 +322,33 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun checkAndBlockDistractionApp(packageName: String, isStudyActive: Boolean, isNuclearActive: Boolean) {
+        // Fast synchronous check against in-memory distraction cache
+        val isDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(packageName)
+        if (!isDistraction) return
+
         val now = System.currentTimeMillis()
-        if (now - lastInterceptTime < 1200L) return
+        val lastIntercept = packageInterceptTimes[packageName] ?: 0L
+        if (now - lastIntercept < 800L) {
+            return // Debounce rapid accessibility window content events for the exact same package
+        }
+
+        val autoLockManager = ScheduledAutoLockManager(applicationContext)
+        // If neither study nor nuclear is active, check if any auto-lock rule is enabled
+        if (!isStudyActive && !isNuclearActive) {
+            val enabledRules = autoLockManager.getRules().filter { it.isEnabled }
+            if (enabledRules.isEmpty()) return
+        }
+
+        packageInterceptTimes[packageName] = now
 
         serviceScope.launch {
-            val distractionPackages = StudyGuardApp.instance.repository.getDistractionPackageNames()
-            if (!distractionPackages.contains(packageName)) return@launch
-
             val todayMins = StudyGuardApp.instance.repository.getTodayStudiedMinutes()
-            val autoLockManager = ScheduledAutoLockManager(applicationContext)
             val autoLockStatus = autoLockManager.getActiveRule(todayMins)
 
             // If timer is not active AND no nuclear lock AND no auto-lock schedule rule is active, allow the app
             if (!isStudyActive && !isNuclearActive && autoLockStatus == null) {
                 return@launch
             }
-
-            lastInterceptTime = now
 
             val appName = try {
                 val appInfo = packageManager.getApplicationInfo(packageName, 0)
@@ -343,6 +367,7 @@ class FocusAccessibilityService : AccessibilityService() {
 
             StudyPreferences.setLastBlockedApp(applicationContext, appName, reason)
 
+            // Minimize distraction app to Home and pop lock overlay
             performGlobalAction(GLOBAL_ACTION_HOME)
             launchBlockScreen(
                 appName = appName,
@@ -375,7 +400,8 @@ class FocusAccessibilityService : AccessibilityService() {
         val intent = Intent(applicationContext, BlockedOverlayActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_NO_ANIMATION
             putExtra(BlockedOverlayActivity.EXTRA_BLOCKED_APP_NAME, appName)
             putExtra(BlockedOverlayActivity.EXTRA_IS_SCHEDULED_LOCK, isScheduled)
             putExtra(BlockedOverlayActivity.EXTRA_IS_NUCLEAR_LOCK, isNuclear)

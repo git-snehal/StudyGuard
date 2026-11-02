@@ -81,6 +81,18 @@ class ScheduledAutoLockManager(private val context: Context) {
     companion object {
         private const val KEY_SCHEDULES_JSON = "schedules_json"
         private const val KEY_INITIALIZED = "schedules_initialized_v2"
+        private const val PREFIX_ACTIVATED_DATE = "rule_activated_date_"
+
+        fun getTodayDateKey(): String {
+            val cal = Calendar.getInstance()
+            return String.format(
+                Locale.US,
+                "%04d-%02d-%02d",
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH) + 1,
+                cal.get(Calendar.DAY_OF_MONTH)
+            )
+        }
     }
 
     private val defaultRules = listOf(
@@ -168,11 +180,56 @@ class ScheduledAutoLockManager(private val context: Context) {
         prefs.edit().putString(KEY_SCHEDULES_JSON, arr.toString()).apply()
     }
 
-    fun toggleRule(id: String, isEnabled: Boolean) {
+    /**
+     * If a custom lockdown is set for today (enabled on today's day of week or activated today)
+     * OR currently running, it CANNOT be turned off, modified, or deleted until tomorrow.
+     */
+    fun isRuleLockedForToday(rule: AutoLockScheduleRule, todayStudiedMinutes: Int = 0): Boolean {
+        if (!rule.isEnabled) return false
+        val active = getActiveRule(todayStudiedMinutes)
+        if (active?.rule?.id == rule.id) return true
+
+        val now = Calendar.getInstance()
+        val currentDay = now.get(Calendar.DAY_OF_WEEK)
+        if (rule.daysOfWeek.contains(currentDay)) return true
+
+        val todayKey = getTodayDateKey()
+        val activatedDate = prefs.getString(PREFIX_ACTIVATED_DATE + rule.id, "")
+        if (activatedDate == todayKey) return true
+
+        return false
+    }
+
+    fun canModifyRule(rule: AutoLockScheduleRule, todayStudiedMinutes: Int = 0): Pair<Boolean, String> {
+        if (isRuleLockedForToday(rule, todayStudiedMinutes)) {
+            val active = getActiveRule(todayStudiedMinutes)
+            val msg = if (active?.rule?.id == rule.id) {
+                "🔒 '${rule.name}' is currently running! Distractions are locked until you study for ${active.remainingStudyMinutes} more minutes today. Cannot be turned down."
+            } else {
+                "🔒 '${rule.name}' is scheduled for today. Once a custom lockdown is set for the day, it cannot be turned down or deleted until tomorrow morning!"
+            }
+            return Pair(false, msg)
+        }
+        return Pair(true, "")
+    }
+
+    fun toggleRule(id: String, isEnabled: Boolean, todayStudiedMinutes: Int = 0): Boolean {
+        val rule = getRules().find { it.id == id } ?: return false
+        if (!isEnabled && isRuleLockedForToday(rule, todayStudiedMinutes)) {
+            return false // Strict commitment: Refuse to turn down once set for today!
+        }
+        if (isEnabled) {
+            val now = Calendar.getInstance()
+            val currentDay = now.get(Calendar.DAY_OF_WEEK)
+            if (rule.daysOfWeek.contains(currentDay)) {
+                prefs.edit().putString(PREFIX_ACTIVATED_DATE + id, getTodayDateKey()).apply()
+            }
+        }
         val current = getRules().map {
             if (it.id == id) it.copy(isEnabled = isEnabled) else it
         }
         saveRules(current)
+        return true
     }
 
     fun addRule(
@@ -184,31 +241,58 @@ class ScheduledAutoLockManager(private val context: Context) {
         endMinute: Int,
         requiredStudyMinutes: Int
     ) {
+        val newId = "rule_${System.currentTimeMillis()}"
+        val chosenDays = if (daysOfWeek.isEmpty()) {
+            listOf(Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY)
+        } else daysOfWeek
+
         val newRule = AutoLockScheduleRule(
-            id = "rule_${System.currentTimeMillis()}",
+            id = newId,
             name = name.ifBlank { "Study Gate" },
             isEnabled = true,
-            daysOfWeek = if (daysOfWeek.isEmpty()) listOf(Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY) else daysOfWeek,
+            daysOfWeek = chosenDays,
             startHour = startHour,
             startMinute = startMinute,
             endHour = endHour,
             endMinute = endMinute,
             requiredStudyMinutes = requiredStudyMinutes.coerceAtLeast(15)
         )
+
+        val now = Calendar.getInstance()
+        val currentDay = now.get(Calendar.DAY_OF_WEEK)
+        if (chosenDays.contains(currentDay)) {
+            prefs.edit().putString(PREFIX_ACTIVATED_DATE + newId, getTodayDateKey()).apply()
+        }
+
         val list = getRules().toMutableList().apply { add(newRule) }
         saveRules(list)
     }
 
-    fun updateRule(updated: AutoLockScheduleRule) {
+    fun updateRule(updated: AutoLockScheduleRule, todayStudiedMinutes: Int = 0): Boolean {
+        val existing = getRules().find { it.id == updated.id } ?: return false
+        if (isRuleLockedForToday(existing, todayStudiedMinutes)) {
+            val now = Calendar.getInstance()
+            val currentDay = now.get(Calendar.DAY_OF_WEEK)
+            if (!updated.isEnabled || !updated.daysOfWeek.contains(currentDay) || updated.requiredStudyMinutes < existing.requiredStudyMinutes) {
+                return false
+            }
+        }
         val current = getRules().map {
             if (it.id == updated.id) updated else it
         }
         saveRules(current)
+        return true
     }
 
-    fun deleteRule(id: String) {
+    fun deleteRule(id: String, todayStudiedMinutes: Int = 0): Boolean {
+        val rule = getRules().find { it.id == id } ?: return false
+        if (isRuleLockedForToday(rule, todayStudiedMinutes)) {
+            return false // Strict commitment: Refuse to delete!
+        }
         val current = getRules().filterNot { it.id == id }
         saveRules(current)
+        prefs.edit().remove(PREFIX_ACTIVATED_DATE + id).apply()
+        return true
     }
 
     /**

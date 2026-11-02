@@ -103,7 +103,7 @@ class StudyViewModel(
         com.example.util.NotificationBlockReportManager.openNotificationAccessSettings(context)
     }
 
-    private fun showToast(msg: String) {
+    fun showToast(msg: String) {
         viewModelScope.launch(Dispatchers.Main) {
             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -658,6 +658,14 @@ class StudyViewModel(
         reminderManager.sendTestReminder(reminder)
     }
 
+    fun isRuleLockedForToday(rule: com.example.util.AutoLockScheduleRule): Boolean {
+        return autoLockManager.isRuleLockedForToday(rule, getTodayStudyMinutes())
+    }
+
+    fun canModifyAutoLockRule(rule: com.example.util.AutoLockScheduleRule): Pair<Boolean, String> {
+        return autoLockManager.canModifyRule(rule, getTodayStudyMinutes())
+    }
+
     // Auto-Lock Gate (Study-to-Unlock) Operations
     fun addAutoLockRule(
         name: String,
@@ -674,19 +682,52 @@ class StudyViewModel(
     }
 
     fun toggleAutoLockRule(id: String, isEnabled: Boolean) {
-        autoLockManager.toggleRule(id, isEnabled)
+        val rule = autoLockRules.value.find { it.id == id }
+        val todayMins = getTodayStudyMinutes()
+        if (rule != null && !isEnabled) {
+            val (canModify, reason) = autoLockManager.canModifyRule(rule, todayMins)
+            if (!canModify) {
+                showToast(reason)
+                return
+            }
+        }
+        val success = autoLockManager.toggleRule(id, isEnabled, todayMins)
+        if (!success) {
+            showToast("🔒 Custom lockdown is set or active for today and cannot be turned down until tomorrow!")
+        }
         _autoLockRules.value = autoLockManager.getRules()
         refreshAutoLockStatus()
     }
 
     fun deleteAutoLockRule(id: String) {
-        autoLockManager.deleteRule(id)
+        val rule = autoLockRules.value.find { it.id == id }
+        val todayMins = getTodayStudyMinutes()
+        if (rule != null) {
+            val (canModify, reason) = autoLockManager.canModifyRule(rule, todayMins)
+            if (!canModify) {
+                showToast(reason)
+                return
+            }
+        }
+        val success = autoLockManager.deleteRule(id, todayMins)
+        if (!success) {
+            showToast("🔒 Cannot delete a custom lockdown schedule set or running for today!")
+        }
         _autoLockRules.value = autoLockManager.getRules()
         refreshAutoLockStatus()
     }
 
     fun updateAutoLockRule(rule: com.example.util.AutoLockScheduleRule) {
-        autoLockManager.updateRule(rule)
+        val todayMins = getTodayStudyMinutes()
+        val (canModify, reason) = autoLockManager.canModifyRule(rule, todayMins)
+        if (!canModify) {
+            showToast(reason)
+            return
+        }
+        val success = autoLockManager.updateRule(rule, todayMins)
+        if (!success) {
+            showToast("🔒 Custom lockdown scheduled for today cannot be edited to bypass today's lock!")
+        }
         _autoLockRules.value = autoLockManager.getRules()
         refreshAutoLockStatus()
     }

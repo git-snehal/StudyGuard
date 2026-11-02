@@ -148,12 +148,18 @@ fun AppShieldsScreen(
                 AutoLockSchedulesTab(
                     rules = autoLockRules,
                     activeStatus = activeAutoLockStatus,
-                    onAddNewRule = { showAddScheduleDialog = true },
+                    isNuclearLockActive = uiState.isNuclearLockActive,
+                    onAddNewRule = {
+                        if (uiState.isNuclearLockActive) {
+                            Toast.makeText(context, "Cannot add schedules during Nuclear Mode!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showAddScheduleDialog = true
+                        }
+                    },
                     onEditRule = { rule -> editingRule = rule },
                     onToggleRule = onToggleAutoLockRule,
                     onDeleteRule = { id ->
                         onDeleteAutoLockRule(id)
-                        Toast.makeText(context, "Lock schedule deleted!", Toast.LENGTH_SHORT).show()
                     }
                 )
             }
@@ -990,11 +996,14 @@ private fun AppShieldRow(
 private fun AutoLockSchedulesTab(
     rules: List<AutoLockScheduleRule>,
     activeStatus: ActiveAutoLockStatus?,
+    isNuclearLockActive: Boolean,
     onAddNewRule: () -> Unit,
     onEditRule: (AutoLockScheduleRule) -> Unit,
     onToggleRule: (String, Boolean) -> Unit,
     onDeleteRule: (String) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1043,6 +1052,29 @@ private fun AutoLockSchedulesTab(
                     color = Color(0xFFCBD5E1),
                     fontSize = 12.sp,
                     lineHeight = 17.sp
+                )
+            }
+        }
+
+        // Strict Day Commitment Notice
+        Surface(
+            color = Color(0xFF1E293B),
+            shape = RoundedCornerShape(14.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, TertiaryAmber.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(Icons.Default.Security, contentDescription = null, tint = TertiaryAmber, modifier = Modifier.size(20.dp))
+                Text(
+                    text = "🛡️ Strict Day-Lock Guarantee: Once a custom lockdown is turned ON or scheduled for today, it cannot be turned down or deleted until tomorrow morning (6:00 AM).",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFFCBD5E1),
+                    lineHeight = 15.sp
                 )
             }
         }
@@ -1096,7 +1128,8 @@ private fun AutoLockSchedulesTab(
                 onClick = onAddNewRule,
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                enabled = !isNuclearLockActive
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
@@ -1136,7 +1169,8 @@ private fun AutoLockSchedulesTab(
                     Button(
                         onClick = onAddNewRule,
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isNuclearLockActive
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -1154,6 +1188,8 @@ private fun AutoLockSchedulesTab(
                 items(rules, key = { it.id }) { rule ->
                     ScheduleRuleCard(
                         rule = rule,
+                        activeStatus = activeStatus,
+                        isNuclearLockActive = isNuclearLockActive,
                         onToggle = { isChecked -> onToggleRule(rule.id, isChecked) },
                         onEdit = { onEditRule(rule) },
                         onDelete = { onDeleteRule(rule.id) }
@@ -1167,10 +1203,20 @@ private fun AutoLockSchedulesTab(
 @Composable
 private fun ScheduleRuleCard(
     rule: AutoLockScheduleRule,
+    activeStatus: ActiveAutoLockStatus?,
+    isNuclearLockActive: Boolean,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isLockedForToday = remember(rule, activeStatus, isNuclearLockActive) {
+        isNuclearLockActive || com.example.util.ScheduledAutoLockManager(context).isRuleLockedForToday(
+            rule = rule,
+            todayStudiedMinutes = activeStatus?.completedStudyMinutes ?: 0
+        )
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1184,6 +1230,30 @@ private fun ScheduleRuleCard(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            if (isLockedForToday) {
+                Surface(
+                    color = Color(0xFFEF4444).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
+                        Text(
+                            text = if (isNuclearLockActive) "LOCKED BY NUCLEAR MODE" else "LOCKED FOR TODAY (CANNOT TURN OFF)",
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.4.sp
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1220,10 +1290,30 @@ private fun ScheduleRuleCard(
                     }
                 }
 
-                Switch(
-                    checked = rule.isEnabled,
-                    onCheckedChange = onToggle
-                )
+                if (isLockedForToday && rule.isEnabled) {
+                    IconButton(
+                        onClick = {
+                            Toast.makeText(
+                                context,
+                                "🔒 Strict Commitment: This custom lockdown is active or scheduled for today and cannot be turned down until tomorrow morning!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.Lock,
+                            contentDescription = "Locked ON for today",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                } else {
+                    Switch(
+                        checked = rule.isEnabled,
+                        onCheckedChange = onToggle,
+                        enabled = !isLockedForToday && !isNuclearLockActive
+                    )
+                }
             }
 
             Row(
@@ -1267,18 +1357,34 @@ private fun ScheduleRuleCard(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = onEdit,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit Schedule", tint = PrimaryIndigo, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(6.dp))
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                if (isLockedForToday || isNuclearLockActive) {
+                    Text(
+                        text = "Locked for today",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8),
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        Icons.Default.Lock,
+                        contentDescription = "Locked",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(16.dp)
+                    )
+                } else {
+                    IconButton(
+                        onClick = onEdit,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Schedule", tint = PrimaryIndigo, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }

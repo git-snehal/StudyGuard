@@ -140,4 +140,23 @@ object UsageStatsManagerHelper {
     fun getTodayDistractionTimeMs(context: Context): Long {
         return getTodayAppUsageList(context).filter { it.isDistraction }.sumOf { it.totalTimeInForegroundMs }
     }
+
+    fun getForegroundPackageName(context: Context): String? {
+        if (!hasUsageStatsPermission(context)) return null
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return null
+        val now = System.currentTimeMillis()
+        val events = usageStatsManager.queryEvents(now - 10_000L, now) ?: return null
+        var lastPkg: String? = null
+        val event = android.app.usage.UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED ||
+                event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND
+            ) {
+                lastPkg = event.packageName
+            }
+        }
+        return lastPkg
+    }
 }

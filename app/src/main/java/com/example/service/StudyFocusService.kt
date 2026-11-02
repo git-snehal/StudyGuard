@@ -88,8 +88,46 @@ class StudyFocusService : Service() {
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
                 manager.notify(NOTIFICATION_ID, notification)
 
+                checkForegroundAppWatchdog()
+
                 delay(1000L)
             }
+        }
+    }
+
+    private fun checkForegroundAppWatchdog() {
+        try {
+            val emergencyLock = EmergencyLockManager.getInstance(applicationContext)
+            val isNuclearBlockActive = emergencyLock.isNuclearBlockAppsActive()
+            val isStudyActive = StudyPreferences.isStudyActive(applicationContext) || isNuclearBlockActive
+            if (!isStudyActive) return
+
+            val fgPkg = com.example.util.UsageStatsManagerHelper.getForegroundPackageName(applicationContext) ?: return
+            if (fgPkg == packageName || fgPkg == "com.android.systemui" || fgPkg.contains("launcher")) {
+                return
+            }
+
+            val isDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(fgPkg)
+            if (isDistraction) {
+                val appName = try {
+                    val appInfo = packageManager.getApplicationInfo(fgPkg, 0)
+                    packageManager.getApplicationLabel(appInfo).toString()
+                } catch (e: Exception) {
+                    fgPkg
+                }
+                val intent = Intent(applicationContext, com.example.ui.lock.BlockedOverlayActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    putExtra(com.example.ui.lock.BlockedOverlayActivity.EXTRA_BLOCKED_APP_NAME, appName)
+                    putExtra(com.example.ui.lock.BlockedOverlayActivity.EXTRA_IS_NUCLEAR_LOCK, isNuclearBlockActive)
+                    putExtra(com.example.ui.lock.BlockedOverlayActivity.EXTRA_RULE_NAME, "Study Focus Lock")
+                }
+                applicationContext.startActivity(intent)
+            }
+        } catch (e: Exception) {
+            // Guard against background inspection exceptions
         }
     }
 

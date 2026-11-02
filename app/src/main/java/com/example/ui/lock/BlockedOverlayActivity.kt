@@ -46,6 +46,35 @@ class BlockedOverlayActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        @Suppress("DEPRECATION")
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+        )
+
+        // Strict Enforcement: Pressing Back must NEVER reveal the distraction app!
+        // Direct the user safely to the Home Launcher.
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                startActivity(homeIntent)
+                finish()
+            }
+        })
+
+        renderBlockedUi()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        renderBlockedUi()
+    }
+
+    private fun renderBlockedUi() {
         val appName = intent.getStringExtra(EXTRA_BLOCKED_APP_NAME)
             ?: StudyPreferences.getLastBlockedApp(this)
         val reason = StudyPreferences.getLastBlockedReason(this)
