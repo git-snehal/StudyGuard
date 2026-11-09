@@ -16,9 +16,27 @@ object StudyPreferences {
     private const val KEY_EMERGENCY_PASS_COUNT = "emergency_pass_count"
     private const val KEY_LAST_KNOWN_BLOCKED_APP = "last_known_blocked_app"
     private const val KEY_LAST_BLOCKED_REASON = "last_blocked_reason"
+    private const val KEY_DAILY_GOAL_MINUTES = "daily_goal_minutes"
+    private const val KEY_PERSISTED_DISTRACTION_PACKAGES = "persisted_distraction_packages"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun getDailyGoalMinutes(context: Context): Int {
+        return getPrefs(context).getInt(KEY_DAILY_GOAL_MINUTES, 180)
+    }
+
+    fun setDailyGoalMinutes(context: Context, minutes: Int) {
+        getPrefs(context).edit().putInt(KEY_DAILY_GOAL_MINUTES, minutes.coerceAtLeast(15)).apply()
+    }
+
+    fun getPersistedDistractionPackages(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_PERSISTED_DISTRACTION_PACKAGES, emptySet()) ?: emptySet()
+    }
+
+    fun setPersistedDistractionPackages(context: Context, packages: Set<String>) {
+        getPrefs(context).edit().putStringSet(KEY_PERSISTED_DISTRACTION_PACKAGES, packages).apply()
     }
 
     fun isStudyActive(context: Context): Boolean {

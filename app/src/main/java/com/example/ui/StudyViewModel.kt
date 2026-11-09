@@ -166,6 +166,20 @@ class StudyViewModel(
     private val _themeMode = MutableStateFlow(StudyPreferences.getThemeMode(context))
     val themeMode: StateFlow<StudyPreferences.ThemeMode> = _themeMode.asStateFlow()
 
+    // Daily Deep Work Target
+    private val _dailyGoalMinutes = MutableStateFlow(StudyPreferences.getDailyGoalMinutes(context))
+    val dailyGoalMinutes: StateFlow<Int> = _dailyGoalMinutes.asStateFlow()
+
+    fun setDailyGoalMinutes(minutes: Int) {
+        val target = minutes.coerceIn(15, 1440)
+        StudyPreferences.setDailyGoalMinutes(context, target)
+        _dailyGoalMinutes.value = target
+        val hours = target / 60
+        val mins = target % 60
+        val label = if (hours > 0 && mins > 0) "${hours}h ${mins}m" else if (hours > 0) "${hours}h" else "${mins}m"
+        showToast("🎯 Daily Deep Work Target updated to $label!")
+    }
+
     // AI Study Coach & Multi-turn Chat State
     private val _aiCoachResponse = MutableStateFlow<String?>(null)
     val aiCoachResponse: StateFlow<String?> = _aiCoachResponse.asStateFlow()

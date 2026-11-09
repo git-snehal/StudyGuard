@@ -27,8 +27,16 @@ class StudyRepository(
     companion object {
         val distractionCache: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
-        fun isPackageDistraction(packageName: String): Boolean {
-            return distractionCache.contains(packageName)
+        fun isPackageDistraction(packageName: String, context: Context? = null): Boolean {
+            if (distractionCache.contains(packageName)) return true
+            if (context != null) {
+                val persisted = StudyPreferences.getPersistedDistractionPackages(context)
+                if (persisted.isNotEmpty()) {
+                    distractionCache.addAll(persisted)
+                    return distractionCache.contains(packageName)
+                }
+            }
+            return false
         }
     }
 
@@ -43,10 +51,18 @@ class StudyRepository(
     val allPlaylists: Flow<List<PlaylistEntity>> = studyDao.getAllPlaylists()
 
     init {
+        // Synchronously load persisted distraction packages so cache is never empty after process restart/clear recents on Android 10
+        val persisted = StudyPreferences.getPersistedDistractionPackages(context)
+        if (persisted.isNotEmpty()) {
+            distractionCache.addAll(persisted)
+        }
+
         CoroutineScope(Dispatchers.IO).launch {
             distractionApps.collect { list ->
                 distractionCache.clear()
-                distractionCache.addAll(list.map { it.packageName })
+                val pkgSet = list.map { it.packageName }.toSet()
+                distractionCache.addAll(pkgSet)
+                StudyPreferences.setPersistedDistractionPackages(context, pkgSet)
             }
         }
     }
@@ -123,6 +139,7 @@ class StudyRepository(
         } else {
             distractionCache.remove(packageName)
         }
+        StudyPreferences.setPersistedDistractionPackages(context, distractionCache)
         studyDao.setAppDistractionState(packageName, isDistraction)
     }
 
@@ -132,6 +149,7 @@ class StudyRepository(
         } else {
             distractionCache.remove(packageName)
         }
+        StudyPreferences.setPersistedDistractionPackages(context, distractionCache)
         studyDao.insertOrUpdateApp(
             BlockedAppEntity(
                 packageName = packageName,
@@ -163,6 +181,7 @@ class StudyRepository(
     suspend fun setAllDistractions(distractPackageNames: Set<String>) = withContext(Dispatchers.IO) {
         distractionCache.clear()
         distractionCache.addAll(distractPackageNames)
+        StudyPreferences.setPersistedDistractionPackages(context, distractionCache)
         val all = studyDao.getAllAppConfigs().first()
         for (app in all) {
             val shouldBlock = distractPackageNames.contains(app.packageName)

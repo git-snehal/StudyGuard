@@ -73,8 +73,13 @@ class FocusAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 1. YouTube Shorts Detection & Blocking (Allow regular study videos!)
+        // 1. YouTube Shorts Detection & Blocking (Allow regular study videos unless YouTube itself is a blocked distraction!)
         if (packageName == "com.google.android.youtube") {
+            val isFullDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(packageName, context)
+            if (isFullDistraction && (isStudyActive || isNuclearBlockActive)) {
+                checkAndBlockDistractionApp(packageName, isStudyActive, isNuclearBlockActive)
+                return
+            }
             if ((isStudyActive && StudyPreferences.isBlockYouTubeShortsEnabled(context)) || isNuclearBlockActive) {
                 handleYouTubeAccessibility(event)
             }
@@ -167,21 +172,31 @@ class FocusAccessibilityService : AccessibilityService() {
         applicationContext.startActivity(intent)
     }
 
+    private var shortsConsecutiveCount = 0
+
     private fun handleYouTubeAccessibility(event: AccessibilityEvent) {
-        val rootNode = rootInActiveWindow ?: return
+        val rootNode = rootInActiveWindow ?: event.source
         val isShorts = isYouTubeShortsNode(rootNode) || isShortsEvent(event)
 
         if (isShorts) {
             val now = System.currentTimeMillis()
-            if (now - lastShortsInterceptTime > 2000L) {
+            if (now - lastShortsInterceptTime > 600L) {
                 lastShortsInterceptTime = now
-                performGlobalAction(GLOBAL_ACTION_BACK)
+                shortsConsecutiveCount++
+
+                // If user repeatedly forces into Shorts or stays stuck in Shorts tab, return to Home
+                if (shortsConsecutiveCount >= 3) {
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    shortsConsecutiveCount = 0
+                } else {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
 
                 mainHandler.post {
                     Toast.makeText(
                         applicationContext,
                         "🛑 YouTube Shorts blocked! Normal study videos are allowed 📚",
-                        Toast.LENGTH_LONG
+                        Toast.LENGTH_SHORT
                     ).show()
                 }
 
@@ -194,6 +209,8 @@ class FocusAccessibilityService : AccessibilityService() {
                     )
                 }
             }
+        } else {
+            shortsConsecutiveCount = 0
         }
     }
 
@@ -206,7 +223,14 @@ class FocusAccessibilityService : AccessibilityService() {
             viewId.contains("shorts_player") ||
             viewId.contains("shorts_container") ||
             viewId.contains("reel_player_page_container") ||
-            viewId.contains("pivot_button")
+            viewId.contains("pivot_button") ||
+            viewId.contains("shorts_shelf") ||
+            viewId.contains("shorts_video") ||
+            viewId.contains("reel_watch") ||
+            viewId.contains("modern_shorts") ||
+            viewId.contains("shorts_sound") ||
+            viewId.contains("shorts_audio") ||
+            viewId.contains("reel_container")
         ) {
             return true
         }
@@ -214,20 +238,28 @@ class FocusAccessibilityService : AccessibilityService() {
         val text = node.text?.toString()?.lowercase() ?: ""
         val desc = node.contentDescription?.toString()?.lowercase() ?: ""
 
-        if (node.isSelected && (desc == "shorts" || text == "shorts")) {
+        if ((node.isSelected || node.isFocused) && (desc == "shorts" || text == "shorts")) {
             return true
         }
 
         if (desc.contains("sound used in this short") ||
             desc.contains("remix this video") ||
             desc.contains("shorts player") ||
-            text.contains("sound used in this short")
+            desc.contains("use this sound") ||
+            desc.contains("sound used in this video") ||
+            desc.contains("dislike this short") ||
+            desc.contains("like this short") ||
+            desc.contains("audio from") ||
+            text.contains("sound used in this short") ||
+            text.contains("use this sound") ||
+            (desc.startsWith("shorts") && desc.contains("views")) ||
+            (text == "shorts" && node.isClickable)
         ) {
             return true
         }
 
         val childCount = node.childCount
-        for (i in 0 until childCount.coerceAtMost(15)) {
+        for (i in 0 until childCount.coerceAtMost(20)) {
             val child = node.getChild(i)
             if (child != null) {
                 val found = isYouTubeShortsNode(child)
@@ -241,15 +273,27 @@ class FocusAccessibilityService : AccessibilityService() {
 
     private fun isShortsEvent(event: AccessibilityEvent): Boolean {
         val className = event.className?.toString()?.lowercase() ?: ""
-        if (className.contains("reel") || className.contains("shortsactivity")) {
+        if (className.contains("reel") ||
+            className.contains("shortsactivity") ||
+            className.contains("reelwatchactivity") ||
+            className.contains("shorts")
+        ) {
             return true
         }
         val textList = event.text
         for (cs in textList) {
             val s = cs.toString().lowercase()
-            if (s.contains("sound used in this short") || s.contains("remix this video")) {
+            if (s.contains("sound used in this short") ||
+                s.contains("remix this video") ||
+                s.contains("shorts") ||
+                s.contains("use this sound")
+            ) {
                 return true
             }
+        }
+        val desc = event.contentDescription?.toString()?.lowercase() ?: ""
+        if (desc.contains("sound used in this short") || desc == "shorts" || desc.contains("shorts player")) {
+            return true
         }
         return false
     }
@@ -322,8 +366,8 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun checkAndBlockDistractionApp(packageName: String, isStudyActive: Boolean, isNuclearActive: Boolean) {
-        // Fast synchronous check against in-memory distraction cache
-        val isDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(packageName)
+        // Fast synchronous check against in-memory distraction cache with persistent fallback
+        val isDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(packageName, applicationContext)
         if (!isDistraction) return
 
         val now = System.currentTimeMillis()

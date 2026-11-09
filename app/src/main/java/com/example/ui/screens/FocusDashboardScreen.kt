@@ -78,12 +78,15 @@ fun FocusDashboardScreen(
     onNavigateToSync: () -> Unit = {},
     onNavigateToMusic: () -> Unit = {},
     onActivateNuclearLock: (Int) -> Unit = {},
+    dailyGoalMinutes: Int = 180,
+    onUpdateDailyGoalMinutes: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var showNuclearDashboardDialog by remember { mutableStateOf(false) }
     var nuclearMinutes by remember { mutableStateOf(30) }
     var showNuclearWarningDialog by remember { mutableStateOf(false) }
+    var showEditDailyTargetDialog by remember { mutableStateOf(false) }
 
     // Live phone study minutes: sum all saved sessions + currently active session elapsed time
     val activeElapsedMinutes = if (uiState.isStudyActive) {
@@ -151,8 +154,7 @@ fun FocusDashboardScreen(
         context.startActivity(Intent.createChooser(sendIntent, "Share Study Scorecard with Friends"))
     }
 
-    // Daily Goal (Goal: 180 min / 3h)
-    val dailyGoalMinutes = 180
+    // Daily Goal
     val todayCompletedMinutes = remember(sessions, laptopFocusMinutes) {
         val todayStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
         val phoneToday = sessions.filter {
@@ -299,9 +301,12 @@ fun FocusDashboardScreen(
             }
         }
 
-        // Daily Study Goal Progress Card
+        // Daily Study Goal Progress Card (Customizable)
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showEditDailyTargetDialog = true }
+                .testTag("daily_target_progress_card"),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface
@@ -328,12 +333,28 @@ fun FocusDashboardScreen(
                             fontSize = 14.sp
                         )
                     }
-                    Text(
-                        text = "$todayCompletedMinutes / $dailyGoalMinutes min",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = PrimaryIndigo
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "$todayCompletedMinutes / $dailyGoalMinutes min",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = PrimaryIndigo
+                        )
+                        IconButton(
+                            onClick = { showEditDailyTargetDialog = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit Daily Target",
+                                tint = PrimaryIndigo,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
                 }
 
                 LinearProgressIndicator(
@@ -346,12 +367,29 @@ fun FocusDashboardScreen(
                     trackColor = PrimaryIndigo.copy(alpha = 0.15f)
                 )
 
-                Text(
-                    text = if (goalProgress >= 1f) "🎉 Daily target achieved! Fantastic discipline."
-                    else "${dailyGoalMinutes - todayCompletedMinutes} minutes remaining to reach today's deep work target.",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (goalProgress >= 1f) {
+                            val surplus = todayCompletedMinutes - dailyGoalMinutes
+                            if (surplus > 0) "🎉 Daily target achieved! +${surplus}m bonus focus." else "🎉 Daily target achieved! Fantastic discipline."
+                        } else {
+                            "${dailyGoalMinutes - todayCompletedMinutes}m remaining to reach target."
+                        },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "Customize ⚙️",
+                        fontSize = 11.sp,
+                        color = PrimaryIndigo,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -792,6 +830,18 @@ fun FocusDashboardScreen(
                     )
                 }
             }
+        }
+
+        // Dialog: Custom Daily Target Editor
+        if (showEditDailyTargetDialog) {
+            EditDailyTargetDialog(
+                initialMinutes = dailyGoalMinutes,
+                onDismiss = { showEditDailyTargetDialog = false },
+                onSave = { newMins ->
+                    showEditDailyTargetDialog = false
+                    onUpdateDailyGoalMinutes(newMins)
+                }
+            )
         }
 
         // Dialog: Nuclear Total Lockout Duration Selector
@@ -1467,3 +1517,209 @@ private fun saveFriends(prefs: android.content.SharedPreferences, list: List<Fri
         // ignore
     }
 }
+
+@Composable
+private fun EditDailyTargetDialog(
+    initialMinutes: Int,
+    onDismiss: () -> Unit,
+    onSave: (Int) -> Unit
+) {
+    var selectedMinutes by remember { mutableIntStateOf(initialMinutes.coerceIn(15, 720)) }
+    var customText by remember { mutableStateOf(selectedMinutes.toString()) }
+
+    val presetGoals = listOf(90, 120, 180, 240, 300, 360, 480)
+
+    val hours = selectedMinutes / 60
+    val mins = selectedMinutes % 60
+    val formattedTarget = when {
+        hours > 0 && mins > 0 -> "${hours}h ${mins}m"
+        hours > 0 -> "${hours} hrs"
+        else -> "${mins} mins"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(PrimaryIndigo.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Flag,
+                    contentDescription = null,
+                    tint = PrimaryIndigo,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Daily Deep Work Target",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "Personalize your daily deep work study goal. Track daily streaks and bonus focus time when you surpass it!",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+
+                // Current Target Display Card
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = PrimaryIndigo.copy(alpha = 0.08f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryIndigo.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = formattedTarget,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Black,
+                            color = PrimaryIndigo
+                        )
+                        Text(
+                            text = "($selectedMinutes total minutes per day)",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Quick Presets
+                Text(
+                    text = "Quick Presets:",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(presetGoals) { preset ->
+                        val isSelected = preset == selectedMinutes
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedMinutes = preset
+                                customText = preset.toString()
+                            },
+                            label = {
+                                val pHours = preset / 60
+                                val pMins = preset % 60
+                                val label = if (pMins == 0) "${pHours}h" else "${pHours}h ${pMins}m"
+                                Text(
+                                    text = "$label (${preset}m)",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PrimaryIndigo,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+
+                // Slider Control
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Fine Tuning", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${selectedMinutes} min", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = PrimaryIndigo)
+                    }
+                    Slider(
+                        value = selectedMinutes.toFloat(),
+                        onValueChange = {
+                            val rounded = ((it / 15).toInt() * 15).coerceIn(15, 720)
+                            selectedMinutes = rounded
+                            customText = rounded.toString()
+                        },
+                        valueRange = 15f..720f,
+                        steps = 46, // 15-min increments from 15 to 720
+                        colors = SliderDefaults.colors(
+                            thumbColor = PrimaryIndigo,
+                            activeTrackColor = PrimaryIndigo
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // +/- Buttons & Manual Entry
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            selectedMinutes = (selectedMinutes - 15).coerceIn(15, 720)
+                            customText = selectedMinutes.toString()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("-15m", fontSize = 12.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            selectedMinutes = (selectedMinutes + 15).coerceIn(15, 720)
+                            customText = selectedMinutes.toString()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("+15m", fontSize = 12.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            selectedMinutes = (selectedMinutes + 30).coerceIn(15, 720)
+                            customText = selectedMinutes.toString()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("+30m", fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(selectedMinutes) },
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+            ) {
+                Text("Save Target")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+

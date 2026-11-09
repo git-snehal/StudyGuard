@@ -131,6 +131,7 @@ fun MainAppContent(viewModel: StudyViewModel, initialShowReminders: Boolean = fa
     val isLiveGemini by viewModel.isLiveGemini.collectAsStateWithLifecycle()
     val chatMessages by viewModel.chatMessages.collectAsStateWithLifecycle()
     val selectedCoachRole by viewModel.selectedCoachRole.collectAsStateWithLifecycle()
+    val dailyGoalMinutes by viewModel.dailyGoalMinutes.collectAsStateWithLifecycle()
 
     val hasOverlay = showSecurityOverlay || showChromeHelpOverlay || showBadgesOverlay ||
             showHistoryOverlay || showRemindersOverlay || showAiCoachOverlay || showFlashcardsOverlay
@@ -581,6 +582,10 @@ fun MainAppContent(viewModel: StudyViewModel, initialShowReminders: Boolean = fa
                                 laptopStats = laptopStats,
                                 autoLockRules = autoLockRules,
                                 activeAutoLockStatus = activeAutoLockStatus,
+                                dailyGoalMinutes = dailyGoalMinutes,
+                                onUpdateDailyGoalMinutes = { mins ->
+                                    viewModel.setDailyGoalMinutes(mins)
+                                },
                                 onStartSprint = { mins, subject ->
                                     viewModel.startSession(subject, mins)
                                     currentTab = MainTab.STUDY

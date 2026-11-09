@@ -85,6 +85,7 @@
         <service
             android:name=".service.StudyFocusService"
             android:foregroundServiceType="specialUse"
+            android:stopWithTask="false"
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

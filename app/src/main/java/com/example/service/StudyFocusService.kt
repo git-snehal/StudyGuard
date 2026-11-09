@@ -107,7 +107,7 @@ class StudyFocusService : Service() {
                 return
             }
 
-            val isDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(fgPkg)
+            val isDistraction = com.example.data.repository.StudyRepository.isPackageDistraction(fgPkg, applicationContext)
             if (isDistraction) {
                 val appName = try {
                     val appInfo = packageManager.getApplicationInfo(fgPkg, 0)
@@ -211,6 +211,34 @@ class StudyFocusService : Service() {
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        val context = applicationContext
+        val isStudyActive = StudyPreferences.isStudyActive(context)
+        val isNuclear = EmergencyLockManager.getInstance(context).isNuclearLockActive()
+        if (isStudyActive || isNuclear) {
+            val restartIntent = Intent(context, StudyFocusService::class.java).apply {
+                action = ACTION_RESUME
+            }
+            val flags = PendingIntent.FLAG_ONE_SHOT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            val pendingIntent = PendingIntent.getService(context, 1002, restartIntent, flags)
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager?.setExactAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 500L,
+                    pendingIntent
+                )
+            } else {
+                alarmManager?.setExact(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 500L,
+                    pendingIntent
+                )
+            }
+        }
     }
 
     override fun onDestroy() {
